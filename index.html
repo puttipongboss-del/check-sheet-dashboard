@@ -1562,6 +1562,29 @@ function formatScore(value){
   return Number.isFinite(n) ? `${n}%` : escapeHtml(value);
 }
 
+function totalItemsFor(machine){
+  const info = overviewData[machine];
+  if(info && Number.isFinite(Number(info.itemCount)) && Number(info.itemCount) > 0){
+    return Number(info.itemCount);
+  }
+  const h = SCHEMAS[machine] || [];
+  return h.filter(x => !["Timestamp","Score","ผู้ตรวจสอบ"].includes(x)).length;
+}
+
+function formatScoreFraction(score, total){
+  if(score === null || score === undefined || score === ""){
+    return total ? `— / ${total}` : "—";
+  }
+  const str = String(score).trim();
+  if(str.includes("/")){
+    // Sheet cell already returns something like "26 / 39" — just tidy the spacing.
+    return escapeHtml(str.replace(/\s*\/\s*/, "/"));
+  }
+  const n = Number(str);
+  if(!Number.isFinite(n)) return escapeHtml(str);
+  return total ? `${n}/${total}` : String(n);
+}
+
 function formatDateTime(value){
   if(value === null || value === undefined || value === "") return "—";
   const d = new Date(value);
@@ -1633,7 +1656,7 @@ function renderCards(filter=""){
           <span>${m}</span>
           <i>${statusLabel(st)}</i>
         </div>
-        <div class="mc-score">${st==="nodata" ? "—" : formatScore(info.score)}</div>
+        <div class="mc-score">${st==="nodata" ? "—" : formatScoreFraction(info.score, totalItemsFor(m))}</div>
         <div class="mc-foot">
           <span>${st==="nodata" ? "No data available" :
                  info.lastCheck ? `Last: ${formatDateTime(info.lastCheck)}` :
@@ -1718,7 +1741,7 @@ function renderDetailFromApi(m,data){
   d.innerHTML=`
     <div class="detail-stats">
       <div><span>Machine</span><strong>${m}</strong></div>
-      <div><span>Score</span><strong>${formatScore(latest.Score)}</strong></div>
+      <div><span>Score</span><strong>${formatScoreFraction(latest.Score, headers.length)}</strong></div>
       <div><span>Inspector</span><strong>${escapeHtml(latest["ผู้ตรวจสอบ"] || "—")}</strong></div>
       <div><span>Last Check</span><strong>${formatDateTime(latest.Timestamp)}</strong></div>
     </div>
@@ -1761,7 +1784,7 @@ function renderDetailFallback(m,errorMessage=""){
   d.innerHTML=`
     <div class="detail-stats">
       <div><span>Machine</span><strong>${m}</strong></div>
-      <div><span>Score</span><strong>—</strong></div>
+      <div><span>Score</span><strong>— / ${items.length}</strong></div>
       <div><span>Inspector</span><strong>—</strong></div>
       <div><span>Last Check</span><strong>—</strong></div>
     </div>
@@ -1844,7 +1867,7 @@ async function loadHistory(){
             <td>${formatDateTime(r.timestamp)}</td>
             <td><b>${escapeHtml(r.machine)}</b></td>
             <td>${escapeHtml(r.inspector || "—")}</td>
-            <td>${formatScore(r.score)}</td>
+            <td>${formatScoreFraction(r.score, totalItemsFor(r.machine))}</td>
           </tr>`).join("")}</tbody>
       </table>` :
       `<div class="empty"><h2>No records</h2><p>ยังไม่มีข้อมูลการตรวจ</p></div>`;
@@ -1890,7 +1913,7 @@ function exportOverview(){
     return {
       "Machine": m,
       "Status": statusLabel(st),
-      "Score": st==="nodata" ? "—" : formatScore(info.score),
+      "Score": st==="nodata" ? "—" : formatScoreFraction(info.score, totalItemsFor(m)),
       "Inspector": info.inspector || "—",
       "Last Check": formatDateTime(info.lastCheck)
     };
@@ -1917,7 +1940,7 @@ function exportHistory(){
     "Date": formatDateTime(r.timestamp),
     "Machine": r.machine || "—",
     "Inspector": r.inspector || "—",
-    "Score": formatScore(r.score)
+    "Score": formatScoreFraction(r.score, totalItemsFor(r.machine))
   }));
   downloadRowsAsExcel(`history-${timestampForFilename()}.xlsx`, "History", rows);
 }
