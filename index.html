@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Check Sheet Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -15,7 +19,7 @@
       <button class="nav" data-view="machines">⚙ <span>Machines</span></button>
       <button class="nav" data-view="history">◷ <span>History</span></button>
     </nav>
-    <div class="side-foot">42 MACHINES<br><small>NO.25 • NO DATA</small></div>
+    <div class="side-foot">42 machines<br><small>NO.25 — no data</small></div>
   </aside>
 
   <main>
@@ -34,14 +38,23 @@
         <div class="stat"><span>Checked Today</span><strong>—</strong><small>Connect Google Sheet</small></div>
         <div class="stat"><span>Pass Rate</span><strong>—</strong><small>Live data required</small></div>
       </div>
-      <div class="section-head"><div><h2>Machine Status</h2><p>Click a machine to view its check items.</p></div><input id="search" placeholder="🔍 Search machine..."></div>
+      <div class="section-head">
+        <div><h2>Machine Status</h2><p>Click a machine to view its check items.</p></div>
+        <div class="head-actions">
+          <input id="search" placeholder="Search machine...">
+          <button id="exportOverviewBtn" class="btn">⬇ Export Excel</button>
+        </div>
+      </div>
       <div id="machineGrid" class="grid"></div>
     </section>
 
     <section id="machines" class="view">
       <div class="detail-top">
         <div><h2>Machine Detail</h2><p>Dynamic checklist — headers are read from each machine sheet.</p></div>
-        <select id="machineSelect"></select>
+        <div class="head-actions">
+          <select id="machineSelect"></select>
+          <button id="exportMachineBtn" class="btn">⬇ Export Excel</button>
+        </div>
       </div>
       <div id="detail"></div>
     </section>
@@ -1499,6 +1512,8 @@ const machines = Array.from({length:42},(_,i)=>`NO.${i+1}`);
 let overviewData = {};
 let currentMachine = "NO.1";
 let apiOnline = false;
+let currentMachineData = null;
+let currentHistoryRows = [];
 
 function hasApiUrl(){
   return API_URL &&
@@ -1659,6 +1674,7 @@ async function loadMachine(m){
   const d=document.getElementById("detail");
 
   if(m==="NO.25"){
+    currentMachineData = { machine:m, latest:{}, headers:[] };
     d.innerHTML=`<div class="empty nodata-empty">
       <div class="empty-icon">⚪</div>
       <h2>${m} — NO DATA</h2>
@@ -1683,6 +1699,8 @@ function renderDetailFromApi(m,data){
   const headers = data.itemHeaders || (data.headers || []).filter(x =>
     !["Timestamp","Score","ผู้ตรวจสอบ"].includes(x)
   );
+
+  currentMachineData = { machine:m, latest, headers };
 
   d.innerHTML=`
     <div class="detail-stats">
@@ -1710,15 +1728,22 @@ function renderDetailFromApi(m,data){
 function resultIcon(value){
   if(value === null || value === undefined || value === "") return "—";
   const v=String(value).trim().toUpperCase();
-  if(["PASS","OK","YES","✓","TRUE"].includes(v)) return "✓";
-  if(["NG","FAIL","NO","✕","X","FALSE"].includes(v)) return "!";
+  if(["PASS","OK","YES","✓","TRUE"].includes(v)) return `<span style="color:var(--pass)">✓</span>`;
+  if(["NG","FAIL","NO","✕","X","FALSE"].includes(v)) return `<span style="color:var(--ng)">!</span>`;
   return escapeHtml(value);
+}
+
+function resultText(value){
+  if(value === null || value === undefined || value === "") return "—";
+  return String(value);
 }
 
 function renderDetailFallback(m,errorMessage=""){
   const d=document.getElementById("detail");
   const h=SCHEMAS[m]||[];
   const items=h.filter(x=>!["Timestamp","Score","ผู้ตรวจสอบ"].includes(x));
+
+  currentMachineData = { machine:m, latest:{}, headers:items };
 
   d.innerHTML=`
     <div class="detail-stats">
@@ -1775,7 +1800,10 @@ async function loadHistory(){
     <div class="history-panel">
       <div class="history-head">
         <div><h2>Check History</h2><p>Latest records from Google Sheets</p></div>
-        <button class="refresh-btn" id="historyRefresh">↻ Refresh</button>
+        <div class="head-actions">
+          <button class="btn" id="historyExportBtn">⬇ Export Excel</button>
+          <button class="btn" id="historyRefresh">↻ Refresh</button>
+        </div>
       </div>
       <div id="historyTableWrap" class="table-wrap">
         <div class="loading-panel"><div class="spinner"></div><span>Loading history...</span></div>
@@ -1783,6 +1811,7 @@ async function loadHistory(){
     </div>`;
 
   document.getElementById("historyRefresh").onclick=loadHistory;
+  document.getElementById("historyExportBtn").onclick=exportHistory;
 
   if(!hasApiUrl()){
     document.getElementById("historyTableWrap").innerHTML =
@@ -1793,6 +1822,7 @@ async function loadHistory(){
   try{
     const data=await fetchJson("history",{limit:200});
     const rows=data.history || [];
+    currentHistoryRows = rows;
     document.getElementById("historyTableWrap").innerHTML = rows.length ? `
       <table>
         <thead><tr><th>Date</th><th>Machine</th><th>Inspector</th><th>Score</th></tr></thead>
@@ -1806,10 +1836,81 @@ async function loadHistory(){
       </table>` :
       `<div class="empty"><h2>No records</h2><p>ยังไม่มีข้อมูลการตรวจ</p></div>`;
   }catch(err){
+    currentHistoryRows = [];
     document.getElementById("historyTableWrap").innerHTML =
       `<div class="empty"><h2>ไม่สามารถโหลดข้อมูลได้</h2><p>${escapeHtml(err.message)}</p></div>`;
   }
 }
+
+/* =========================================================
+   EXCEL EXPORT (SheetJS)
+   ========================================================= */
+function timestampForFilename(){
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
+function downloadRowsAsExcel(filename, sheetName, rows){
+  if(typeof XLSX === "undefined"){
+    alert("ไม่สามารถโหลดไลบรารี Excel export ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต");
+    return;
+  }
+  if(!rows || !rows.length){
+    alert("ไม่มีข้อมูลสำหรับ export");
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const colWidths = Object.keys(rows[0]).map(key => ({
+    wch: Math.min(60, Math.max(key.length, ...rows.map(r => String(r[key] ?? "").length)) + 2)
+  }));
+  ws["!cols"] = colWidths;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0,31));
+  XLSX.writeFile(wb, filename);
+}
+
+function exportOverview(){
+  const rows = machines.map(m=>{
+    const info = getMachineInfo(m);
+    const st = cardStatus(m);
+    return {
+      "Machine": m,
+      "Status": statusLabel(st),
+      "Score": st==="nodata" ? "—" : formatScore(info.score),
+      "Inspector": info.inspector || "—",
+      "Last Check": info.lastCheck || "—"
+    };
+  });
+  downloadRowsAsExcel(`overview-${timestampForFilename()}.xlsx`, "Overview", rows);
+}
+
+function exportMachineDetail(){
+  if(!currentMachineData || !currentMachineData.headers.length){
+    alert("ไม่มีข้อมูล checklist สำหรับเครื่องนี้");
+    return;
+  }
+  const { machine, latest, headers } = currentMachineData;
+  const rows = headers.map((h,i)=>({
+    "No.": i+1,
+    "Check Item": h,
+    "Result": resultText(latest[h])
+  }));
+  downloadRowsAsExcel(`${machine}-checklist-${timestampForFilename()}.xlsx`, machine, rows);
+}
+
+function exportHistory(){
+  const rows = currentHistoryRows.map(r=>({
+    "Date": r.timestamp || "—",
+    "Machine": r.machine || "—",
+    "Inspector": r.inspector || "—",
+    "Score": formatScore(r.score)
+  }));
+  downloadRowsAsExcel(`history-${timestampForFilename()}.xlsx`, "History", rows);
+}
+
+document.getElementById("exportOverviewBtn").onclick = exportOverview;
+document.getElementById("exportMachineBtn").onclick = exportMachineDetail;
 
 document.querySelectorAll(".nav").forEach(btn=>btn.onclick=()=>{
   document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
