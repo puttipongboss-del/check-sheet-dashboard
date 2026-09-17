@@ -24,7 +24,7 @@
         <h1 id="pageTitle">Overview</h1>
         <p>Check Sheet Monitoring System</p>
       </div>
-      <div class="top-actions"><span class="live-dot"></span> Dashboard Demo</div>
+      <div class="top-actions"><span class="live-dot offline"></span> Demo — ใส่ Google Script URL</div>
     </header>
 
     <section id="overview" class="view active">
@@ -1487,37 +1487,239 @@ const SCHEMAS = {
     "อุณหภูมิน้ำ HOPPER BASE (อุณหภูมิ 40 °C - 50 °C กรอกตัวเลข)"
   ]
 };
-const machines = Array.from({length:42},(_,i)=>`NO.${i+1}`);
+/* =========================================================
+   GOOGLE APPS SCRIPT API
+   Paste your deployed Web App URL between the quotes below.
+   Example:
+   const API_URL = "https://script.google.com/macros/s/AKfycby5MGPykTCNJ87XU9Q1csN6W5LcVea3gbvhDFhSGnnj3FJeMxXK-DmV3lG0UgetcuRZ/exec";
+   ========================================================= */
+const API_URL = "PASTE_YOUR_GOOGLE_SCRIPT_WEB_APP_URL_HERE";
 
-function statusFor(m){ return m==="NO.25" ? "nodata" : "demo"; }
+const machines = Array.from({length:42},(_,i)=>`NO.${i+1}`);
+let overviewData = {};
+let currentMachine = "NO.1";
+let apiOnline = false;
+
+function hasApiUrl(){
+  return API_URL &&
+    !API_URL.includes("PASTE_YOUR_GOOGLE_SCRIPT") &&
+    API_URL.startsWith("http");
+}
+
+function apiUrl(action, params = {}){
+  const url = new URL(API_URL);
+  url.searchParams.set("action", action);
+  Object.entries(params).forEach(([k,v]) => {
+    if(v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
+  });
+  return url.toString();
+}
+
+async function fetchJson(action, params = {}){
+  if(!hasApiUrl()) throw new Error("ยังไม่ได้ใส่ Google Apps Script URL");
+  const res = await fetch(apiUrl(action, params), {cache:"no-store"});
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if(data.success === false) throw new Error(data.error || "API error");
+  return data;
+}
+
+function normalizeApiStatus(machine, rawStatus){
+  // NO.25 is explicitly NO DATA.
+  if(machine === "NO.25") return "nodata";
+  // Existing Apps Script versions may call an empty sheet NO_DATA.
+  // For machines that have a sheet but no submitted row, show NO CHECK.
+  if(rawStatus === "NO_DATA" || rawStatus === "NO_CHECK") return "nocheck";
+  if(rawStatus === "NG") return "ng";
+  if(rawStatus === "PASS") return "pass";
+  return "nocheck";
+}
+
+function escapeHtml(s){
+  return String(s ?? "").replace(/[&<>"']/g,c=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+  }[c]));
+}
+
+function formatScore(value){
+  if(value === null || value === undefined || value === "") return "—";
+  const n = Number(String(value).replace("%",""));
+  return Number.isFinite(n) ? `${n}%` : escapeHtml(value);
+}
+
+function setConnection(online, message=""){
+  apiOnline = online;
+  const el = document.querySelector(".top-actions");
+  if(!el) return;
+  el.innerHTML = `<span class="live-dot ${online ? "online" : "offline"}"></span>${escapeHtml(message || (online ? "Google Sheet Connected" : "Demo / Offline"))}`;
+}
+
+function getMachineInfo(machine){
+  return overviewData[machine] || {
+    machine,
+    status: machine === "NO.25" ? "NO_DATA" : "NO_CHECK",
+    score: null,
+    inspector: null,
+    lastCheck: null,
+    itemCount: 0
+  };
+}
+
+function cardStatus(machine){
+  const info = getMachineInfo(machine);
+  return normalizeApiStatus(machine, info.status);
+}
+
+function statusLabel(st){
+  return {
+    pass:"PASS",
+    ng:"NG",
+    nocheck:"NO CHECK",
+    nodata:"NO DATA"
+  }[st] || "NO CHECK";
+}
+
+function statusIcon(st){
+  return {
+    pass:"✓",
+    ng:"!",
+    nocheck:"○",
+    nodata:"—"
+  }[st] || "○";
+}
+
 function renderCards(filter=""){
   const grid=document.getElementById("machineGrid");
   grid.innerHTML="";
-  machines.filter(m=>m.toLowerCase().includes(filter.toLowerCase())).forEach(m=>{
-    const st=statusFor(m);
-    const card=document.createElement("button");
-    card.className="machine-card "+st;
-    card.innerHTML=`
-      <div class="mc-head"><span>${m}</span><i>${st==="nodata"?"NO DATA":"DEMO"}</i></div>
-      <div class="mc-score">${st==="nodata"?"—":"—"}</div>
-      <div class="mc-foot"><span>${st==="nodata"?"No data available":"Awaiting live data"}</span><b>${st==="nodata"?"⚪":"○"}</b></div>`;
-    card.onclick=()=>openMachine(m);
-    grid.appendChild(card);
-  });
+
+  machines
+    .filter(m=>m.toLowerCase().includes(filter.toLowerCase()))
+    .forEach(m=>{
+      const info = getMachineInfo(m);
+      const st = cardStatus(m);
+
+      const card=document.createElement("button");
+      card.className="machine-card "+st;
+      card.innerHTML=`
+        <div class="mc-head">
+          <span>${m}</span>
+          <i>${statusLabel(st)}</i>
+        </div>
+        <div class="mc-score">${st==="nodata" ? "—" : formatScore(info.score)}</div>
+        <div class="mc-foot">
+          <span>${st==="nodata" ? "No data available" :
+                 info.lastCheck ? `Last: ${escapeHtml(info.lastCheck)}` :
+                 "Waiting for check"}</span>
+          <b>${statusIcon(st)}</b>
+        </div>`;
+      card.onclick=()=>openMachine(m);
+      grid.appendChild(card);
+    });
 }
+
+function updateSummary(){
+  const list = machines.map(getMachineInfo);
+  const checked = list.filter(x => {
+    const st = normalizeApiStatus(x.machine, x.status);
+    return st === "pass" || st === "ng" ||
+      (x.lastCheck && x.machine !== "NO.25");
+  }).length;
+
+  const pass = list.filter(x => normalizeApiStatus(x.machine,x.status)==="pass").length;
+  const ng = list.filter(x => normalizeApiStatus(x.machine,x.status)==="ng").length;
+  const noData = list.filter(x => x.machine==="NO.25").length;
+
+  document.querySelector(".stat:nth-child(1) strong").textContent = "42";
+  document.querySelector(".stat:nth-child(2) strong").textContent = String(41 - 0);
+  document.querySelector(".stat:nth-child(3) strong").textContent = checked;
+  document.querySelector(".stat:nth-child(4) strong").textContent =
+    pass + ng > 0 ? `${((pass/(pass+ng))*100).toFixed(1)}%` : "—";
+
+  document.querySelector(".stat:nth-child(2) small").textContent =
+    "NO.25 = NO DATA";
+}
+
 function openMachine(m){
+  currentMachine = m;
   document.querySelector('[data-view="machines"]').click();
   document.getElementById("machineSelect").value=m;
-  renderDetail(m);
+  renderDetailLoading(m);
+  loadMachine(m);
 }
-function renderDetail(m){
+
+function renderDetailLoading(m){
+  document.getElementById("detail").innerHTML = `
+    <div class="loading-panel">
+      <div class="spinner"></div>
+      <span>Loading ${m}...</span>
+    </div>`;
+}
+
+async function loadMachine(m){
   const d=document.getElementById("detail");
+
   if(m==="NO.25"){
-    d.innerHTML=`<div class="empty"><div class="empty-icon">⚪</div><h2>${m} — NO DATA</h2><p>This machine is reserved in the dashboard but has no check-sheet data.</p></div>`;
+    d.innerHTML=`<div class="empty nodata-empty">
+      <div class="empty-icon">⚪</div>
+      <h2>${m} — NO DATA</h2>
+      <p>This machine is reserved in the dashboard but has no check-sheet data.</p>
+    </div>`;
     return;
   }
+
+  try{
+    const data = await fetchJson("machine",{machine:m});
+    renderDetailFromApi(m,data);
+  }catch(err){
+    // Keep a useful fallback using the headers already embedded in this file.
+    setConnection(false, "API Error");
+    renderDetailFallback(m, err.message);
+  }
+}
+
+function renderDetailFromApi(m,data){
+  const d=document.getElementById("detail");
+  const latest = data.latest || {};
+  const headers = data.itemHeaders || (data.headers || []).filter(x =>
+    !["Timestamp","Score","ผู้ตรวจสอบ"].includes(x)
+  );
+
+  d.innerHTML=`
+    <div class="detail-stats">
+      <div><span>Machine</span><strong>${m}</strong></div>
+      <div><span>Score</span><strong>${formatScore(latest.Score)}</strong></div>
+      <div><span>Inspector</span><strong>${escapeHtml(latest["ผู้ตรวจสอบ"] || "—")}</strong></div>
+      <div><span>Last Check</span><strong>${escapeHtml(latest.Timestamp || "—")}</strong></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">
+        <h3>Check Items</h3>
+        <span>${headers.length} items</span>
+      </div>
+      <div class="items">
+        ${headers.map((x,i)=>`
+          <div class="item">
+            <span>${i+1}</span>
+            <div>${escapeHtml(x)}</div>
+            <b>${resultIcon(latest[x])}</b>
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function resultIcon(value){
+  if(value === null || value === undefined || value === "") return "—";
+  const v=String(value).trim().toUpperCase();
+  if(["PASS","OK","YES","✓","TRUE"].includes(v)) return "✓";
+  if(["NG","FAIL","NO","✕","X","FALSE"].includes(v)) return "!";
+  return escapeHtml(value);
+}
+
+function renderDetailFallback(m,errorMessage=""){
+  const d=document.getElementById("detail");
   const h=SCHEMAS[m]||[];
   const items=h.filter(x=>!["Timestamp","Score","ผู้ตรวจสอบ"].includes(x));
+
   d.innerHTML=`
     <div class="detail-stats">
       <div><span>Machine</span><strong>${m}</strong></div>
@@ -1525,22 +1727,119 @@ function renderDetail(m){
       <div><span>Inspector</span><strong>—</strong></div>
       <div><span>Last Check</span><strong>—</strong></div>
     </div>
-    <div class="panel"><div class="panel-title"><h3>Check Items</h3><span>${items.length} items</span></div>
-    <div class="items">${items.map((x,i)=>`<div class="item"><span>${i+1}</span><div>${escapeHtml(x)}</div><b>—</b></div>`).join("")}</div></div>`;
+    <div class="panel">
+      <div class="panel-title">
+        <h3>Check Items</h3>
+        <span>${items.length} items</span>
+      </div>
+      <div class="items">
+        ${items.map((x,i)=>`
+          <div class="item">
+            <span>${i+1}</span>
+            <div>${escapeHtml(x)}</div>
+            <b>—</b>
+          </div>`).join("")}
+      </div>
+    </div>
+    ${errorMessage ? `<div class="api-warning">Google Apps Script: ${escapeHtml(errorMessage)}</div>` : ""}`;
 }
-function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));}
+
+async function loadOverview(){
+  if(!hasApiUrl()){
+    setConnection(false,"Demo — ใส่ Google Script URL");
+    renderCards();
+    updateSummary();
+    renderDetailFallback("NO.1");
+    return;
+  }
+
+  try{
+    const data = await fetchJson("overview");
+    overviewData = {};
+    (data.machines || []).forEach(x => overviewData[x.machine] = x);
+    setConnection(true,"Google Sheet Connected");
+    renderCards(document.getElementById("search")?.value || "");
+    updateSummary();
+    await loadMachine(currentMachine);
+  }catch(err){
+    setConnection(false,"API Error");
+    renderCards(document.getElementById("search")?.value || "");
+    updateSummary();
+    renderDetailFallback(currentMachine,err.message);
+  }
+}
+
+async function loadHistory(){
+  const section=document.getElementById("history");
+  section.innerHTML=`
+    <div class="history-panel">
+      <div class="history-head">
+        <div><h2>Check History</h2><p>Latest records from Google Sheets</p></div>
+        <button class="refresh-btn" id="historyRefresh">↻ Refresh</button>
+      </div>
+      <div id="historyTableWrap" class="table-wrap">
+        <div class="loading-panel"><div class="spinner"></div><span>Loading history...</span></div>
+      </div>
+    </div>`;
+
+  document.getElementById("historyRefresh").onclick=loadHistory;
+
+  if(!hasApiUrl()){
+    document.getElementById("historyTableWrap").innerHTML =
+      `<div class="empty"><h2>Google Script URL ยังไม่ได้ตั้งค่า</h2><p>ใส่ URL ในตัวแปร API_URL ด้านบนของ index.html</p></div>`;
+    return;
+  }
+
+  try{
+    const data=await fetchJson("history",{limit:200});
+    const rows=data.history || [];
+    document.getElementById("historyTableWrap").innerHTML = rows.length ? `
+      <table>
+        <thead><tr><th>Date</th><th>Machine</th><th>Inspector</th><th>Score</th></tr></thead>
+        <tbody>${rows.map(r=>`
+          <tr>
+            <td>${escapeHtml(r.timestamp || "—")}</td>
+            <td><b>${escapeHtml(r.machine)}</b></td>
+            <td>${escapeHtml(r.inspector || "—")}</td>
+            <td>${formatScore(r.score)}</td>
+          </tr>`).join("")}</tbody>
+      </table>` :
+      `<div class="empty"><h2>No records</h2><p>ยังไม่มีข้อมูลการตรวจ</p></div>`;
+  }catch(err){
+    document.getElementById("historyTableWrap").innerHTML =
+      `<div class="empty"><h2>ไม่สามารถโหลดข้อมูลได้</h2><p>${escapeHtml(err.message)}</p></div>`;
+  }
+}
 
 document.querySelectorAll(".nav").forEach(btn=>btn.onclick=()=>{
-  document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active")); btn.classList.add("active");
+  document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
+  btn.classList.add("active");
   document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
   document.getElementById(btn.dataset.view).classList.add("active");
   document.getElementById("pageTitle").textContent=btn.querySelector("span").textContent;
+
+  if(btn.dataset.view==="history") loadHistory();
 });
+
 document.getElementById("search").oninput=e=>renderCards(e.target.value);
+
 const sel=document.getElementById("machineSelect");
-machines.forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m;sel.appendChild(o)});
-sel.onchange=e=>renderDetail(e.target.value);
-renderCards(); renderDetail("NO.1");
+machines.forEach(m=>{
+  const o=document.createElement("option");
+  o.value=m;
+  o.textContent=m;
+  sel.appendChild(o);
+});
+sel.onchange=e=>{
+  currentMachine=e.target.value;
+  renderDetailLoading(currentMachine);
+  loadMachine(currentMachine);
+};
+
+renderCards();
+updateSummary();
+renderDetailFallback("NO.1");
+loadOverview();
 </script>
 </body>
 </html>
