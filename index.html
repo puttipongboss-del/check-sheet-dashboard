@@ -2155,3 +2155,57 @@ function exportHistory(){
     "Date": formatDateTime(r.timestamp),
     "Machine": r.machine || "—",
     "Inspector": r.inspector || "—",
+    "Score": formatScoreFraction(r.score, totalItemsFor(r.machine))
+  }));
+  downloadRowsAsExcel(`history-${timestampForFilename()}.xlsx`, "History", rows);
+}
+
+document.getElementById("exportOverviewBtn").onclick = exportOverview;
+document.getElementById("exportMachineBtn").onclick = exportMachineDetail;
+
+document.querySelectorAll(".nav").forEach(btn=>btn.onclick=()=>{
+  document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
+  btn.classList.add("active");
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
+  document.getElementById(btn.dataset.view).classList.add("active");
+  document.getElementById("pageTitle").textContent=btn.querySelector("span").textContent;
+
+  if(btn.dataset.view==="approvals") loadApprovals();
+  if(btn.dataset.view==="history") loadHistory();
+});
+
+document.getElementById("search").oninput=e=>renderCards(e.target.value);
+
+const sel=document.getElementById("machineSelect");
+machines.forEach(m=>{
+  const o=document.createElement("option");
+  o.value=m;
+  o.textContent=m;
+  sel.appendChild(o);
+});
+sel.onchange=e=>{
+  currentMachine=e.target.value;
+  renderDetailLoading(currentMachine);
+  loadMachine(currentMachine);
+};
+
+document.getElementById("approvalRefresh").onclick = ()=>loadApprovals();
+
+function startAutoRefresh(){
+  if(overviewRefreshTimer) clearInterval(overviewRefreshTimer);
+  overviewRefreshTimer = setInterval(()=>{
+    if(document.hidden) return;
+    loadOverview();
+  }, 60000);
+}
+
+renderCards();
+updateSummary();
+renderApprovalSummary();
+renderDetailFallback("NO.1");
+openInitialViewFromUrl();
+loadOverview();
+startAutoRefresh();
+</script>
+</body>
+</html>
