@@ -1529,6 +1529,9 @@ let apiOnline = false;
 let currentMachineData = null;
 let currentHistoryRows = [];
 let currentApprovalGroups = [];
+// Stores the last successful approvals API load time.
+// Prevents loadOverview() from referencing an undefined variable.
+let lastApprovalLoad = 0;
 const initialUrlParams = new URLSearchParams(window.location.search);
 
 function hasApiUrl(){
