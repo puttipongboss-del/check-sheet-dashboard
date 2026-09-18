@@ -1529,6 +1529,7 @@ let apiOnline = false;
 let currentMachineData = null;
 let currentHistoryRows = [];
 let currentApprovalGroups = [];
+const initialUrlParams = new URLSearchParams(window.location.search);
 
 function hasApiUrl(){
   return API_URL &&
@@ -1720,6 +1721,11 @@ function approvalStatusClass(status){
   return "waiting";
 }
 
+function isLinkedApproval(group){
+  const linkedGroup = (initialUrlParams.get("group") || "").toLowerCase();
+  return linkedGroup && String(group.group || "").toLowerCase() === linkedGroup;
+}
+
 function renderApprovalSummary(){
   const wrap = document.getElementById("approvalSummary");
   if(!wrap) return;
@@ -1759,12 +1765,14 @@ function renderApprovals(){
     const submitted = (g.submittedMachines || []).join(", ");
     const approved = g.status === "APPROVED";
     const ready = g.complete && !approved;
+    const linked = isLinkedApproval(g);
+    const approvalToken = linked && initialUrlParams.get("token") ? initialUrlParams.get("token") : (g.token || "");
     return `
-      <div class="approval-card ${approvalStatusClass(g.status)}">
+      <div class="approval-card ${approvalStatusClass(g.status)} ${linked ? "linked" : ""}">
         <div class="approval-card-head">
           <div>
             <h3>${escapeHtml(g.label || g.group)}</h3>
-            <p>${Number(g.submittedCount || 0)} of ${Number(g.machineCount || 0)} machines submitted</p>
+            <p>${Number(g.submittedCount || 0)} of ${Number(g.machineCount || 0)} machines submitted${linked ? " · Opened from email link" : ""}</p>
           </div>
           <span>${approvalStatusLabel(g.status)}</span>
         </div>
@@ -1778,7 +1786,7 @@ function renderApprovals(){
           <span>${escapeHtml(g.complete ? (submitted || "—") : (missing || "—"))}</span>
         </div>
         <div class="approval-actions">
-          <button class="btn" ${ready ? "" : "disabled"} onclick="approveGroup('${escapeHtml(g.group)}','${escapeHtml(g.date)}','${escapeHtml(g.token || "")}')">เซ็นอนุมัติ</button>
+          <button class="btn" ${ready ? "" : "disabled"} onclick="approveGroup('${escapeHtml(g.group)}','${escapeHtml(g.date)}','${escapeHtml(approvalToken)}')">เซ็นอนุมัติ</button>
         </div>
       </div>`;
   }).join("");
@@ -1802,7 +1810,11 @@ async function loadApprovals(){
   }
 
   try{
-    const data = await fetchJson("approvals");
+    const params = {};
+    if(initialUrlParams.get("date")){
+      params.date = initialUrlParams.get("date");
+    }
+    const data = await fetchJson("approvals", params);
     currentApprovalGroups = data.groups || [];
     renderApprovalSummary();
     renderApprovals();
@@ -1829,6 +1841,16 @@ async function approveGroup(group, date, token){
     alert("บันทึกการอนุมัติเรียบร้อยแล้ว");
   }catch(err){
     alert("ไม่สามารถอนุมัติได้: " + err.message);
+  }
+}
+
+function openInitialViewFromUrl(){
+  const requestedView = initialUrlParams.get("view");
+  const requestedAction = initialUrlParams.get("action");
+
+  if(requestedView === "approvals" || requestedAction === "approve"){
+    const approvalNav = document.querySelector('[data-view="approvals"]');
+    if(approvalNav) approvalNav.click();
   }
 }
 
@@ -2128,6 +2150,7 @@ renderCards();
 updateSummary();
 renderApprovalSummary();
 renderDetailFallback("NO.1");
+openInitialViewFromUrl();
 loadOverview();
 </script>
 </body>
