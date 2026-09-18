@@ -84,6 +84,7 @@ main{flex:1;min-width:0}
   padding:10px 15px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:.15s;
 }
 .btn:hover,.refresh-btn:hover{border-color:var(--accent);color:var(--accent-deep);background:var(--accent-soft)}
+.btn:disabled{opacity:.45;cursor:not-allowed;border-color:var(--line);color:var(--muted);background:var(--surface)}
 
 .head-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
@@ -104,6 +105,37 @@ main{flex:1;min-width:0}
   margin:8px 0 4px;color:var(--ink);letter-spacing:-.5px;
 }
 .stat small{color:var(--ink-soft);font-size:11px;font-family:var(--font-mono)}
+
+/* ---------- Foreman approvals ---------- */
+.approval-summary{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px}
+.approval-mini{
+  border:1px solid var(--line);background:var(--surface);border-left:3px solid var(--warn);
+  color:var(--ink);border-radius:10px;padding:14px 16px;text-align:left;cursor:pointer;
+  font-family:var(--font-display);box-shadow:0 2px 10px rgba(15,32,29,.04);
+}
+.approval-mini span{display:block;color:var(--muted);font-size:11px}
+.approval-mini strong{display:block;margin:5px 0 3px;font-size:15px}
+.approval-mini small{color:var(--ink-soft);font-family:var(--font-mono);font-size:10.5px}
+.approval-mini.ready{border-left-color:var(--accent)}
+.approval-mini.approved{border-left-color:var(--pass)}
+.approval-mini.muted{cursor:default}
+
+.approval-panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(15,32,29,.04)}
+.approval-list{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;padding:16px;background:var(--surface-2)}
+.approval-card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:10px;padding:16px}
+.approval-card.ready{border-left-color:var(--accent)}
+.approval-card.approved{border-left-color:var(--pass)}
+.approval-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.approval-card-head h3{margin:0;font-size:16px}
+.approval-card-head p{margin:4px 0 0;color:var(--muted);font-size:12px}
+.approval-card-head span{background:var(--warn-soft);color:var(--warn);font-size:10px;font-weight:700;border-radius:20px;padding:5px 9px;white-space:nowrap}
+.approval-card.ready .approval-card-head span{background:var(--accent-soft);color:var(--accent-deep)}
+.approval-card.approved .approval-card-head span{background:var(--pass-soft);color:var(--pass)}
+.approval-meta{display:grid;grid-template-columns:1fr;gap:9px;margin:15px 0;padding:12px;border-radius:8px;background:var(--surface-2)}
+.approval-meta b,.approval-machines b{display:block;color:var(--muted);font-size:10.5px;margin-bottom:3px}
+.approval-meta span,.approval-machines span{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft);word-break:break-word}
+.approval-machines{margin-bottom:14px}
+.approval-actions{display:flex;justify-content:flex-end}
 
 /* ---------- Detail spec grid ---------- */
 .detail-stats{
@@ -193,6 +225,7 @@ tbody tr:hover{background:var(--surface-2)}
   .nav{text-align:center}
   .view{padding:18px}
   .stats,.detail-stats{grid-template-columns:repeat(2,1fr)}
+  .approval-summary,.approval-list{grid-template-columns:1fr}
   .stat:nth-child(2){border-right:none}
   .grid{grid-template-columns:repeat(3,1fr)}
 }
