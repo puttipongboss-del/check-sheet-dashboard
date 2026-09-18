@@ -1532,6 +1532,7 @@ let currentApprovalGroups = [];
 // Stores the last successful approvals API load time.
 // Prevents loadOverview() from referencing an undefined variable.
 let lastApprovalLoad = 0;
+let approvalsInFlight = null;
 const initialUrlParams = new URLSearchParams(window.location.search);
 
 function hasApiUrl(){
@@ -1552,7 +1553,7 @@ function apiUrl(action, params = {}){
 async function fetchJson(action, params = {}){
   if(!hasApiUrl()) throw new Error("ยังไม่ได้ใส่ Google Apps Script URL");
   const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), 30000);
+  const timer = setTimeout(()=>controller.abort(), 45000);
 
   try{
     const res = await fetch(apiUrl(action, params), {
@@ -1841,6 +1842,23 @@ function openApprovals(){
 async function loadApprovals(options = {}){
   const list = document.getElementById("approvalList");
   const silent = options.silent === true;
+
+  // Avoid duplicate requests when the user clicks Approvals/Refresh repeatedly.
+  if(approvalsInFlight){
+    return approvalsInFlight;
+  }
+
+  // If we already have fresh data, render it immediately and avoid another API call.
+  if(
+    !silent &&
+    currentApprovalGroups.length &&
+    (Date.now() - lastApprovalLoad) < 15000
+  ){
+    renderApprovalSummary();
+    renderApprovals();
+    return;
+  }
+
   if(list && !silent){
     list.innerHTML = `<div class="loading-panel"><div class="spinner"></div><span>Loading approvals...</span></div>`;
   }
@@ -1852,21 +1870,43 @@ async function loadApprovals(options = {}){
     return;
   }
 
-  try{
-    const params = {};
-    if(initialUrlParams.get("date")){
-      params.date = initialUrlParams.get("date");
+  approvalsInFlight = (async()=>{
+    try{
+      const params = {};
+      if(initialUrlParams.get("date")){
+        params.date = initialUrlParams.get("date");
+      }
+
+      const data = await fetchJson("approvals", params);
+      currentApprovalGroups = Array.isArray(data.groups) ? data.groups : [];
+      lastApprovalLoad = Date.now();
+
+      renderApprovalSummary();
+      renderApprovals();
+
+    }catch(err){
+      // Keep the last successful data instead of replacing the page with an error.
+      // This is important when Apps Script is temporarily slow/cold-starting.
+      if(currentApprovalGroups.length){
+        renderApprovalSummary();
+        renderApprovals();
+
+        if(list && !silent){
+          const note = document.createElement("div");
+          note.className = "api-warning";
+          note.textContent = "รีเฟรชข้อมูล Approval ไม่สำเร็จชั่วคราว: " + err.message;
+          list.prepend(note);
+        }
+      }else if(list && !silent){
+        list.innerHTML = `<div class="empty"><h2>ไม่สามารถโหลด approvals ได้</h2><p>${escapeHtml(err.message)}</p><button class="btn" onclick="loadApprovals()">↻ ลองใหม่</button></div>`;
+      }
+
+    }finally{
+      approvalsInFlight = null;
     }
-    const data = await fetchJson("approvals", params);
-    currentApprovalGroups = data.groups || [];
-    lastApprovalLoad = Date.now();
-    renderApprovalSummary();
-    renderApprovals();
-  }catch(err){
-    if(list && !silent){
-      list.innerHTML = `<div class="empty"><h2>ไม่สามารถโหลด approvals ได้</h2><p>${escapeHtml(err.message)}</p></div>`;
-    }
-  }
+  })();
+
+  return approvalsInFlight;
 }
 
 async function approveGroup(group, date, token){
