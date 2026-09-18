@@ -17,6 +17,7 @@
     <nav>
       <button class="nav active" data-view="overview">▦ <span>Overview</span></button>
       <button class="nav" data-view="machines">⚙ <span>Machines</span></button>
+      <button class="nav" data-view="approvals">✎ <span>Approvals</span></button>
       <button class="nav" data-view="history">◷ <span>History</span></button>
     </nav>
     <div class="side-foot">42 machines<br><small>NO.25 — no data</small></div>
@@ -38,6 +39,7 @@
         <div class="stat"><span>Checked Today</span><strong>—</strong><small>Connect Google Sheet</small></div>
         <div class="stat"><span>Pass Rate</span><strong>—</strong><small>Live data required</small></div>
       </div>
+      <div id="approvalSummary" class="approval-summary"></div>
       <div class="section-head">
         <div><h2>Machine Status</h2><p>Click a machine to view its check items.</p></div>
         <div class="head-actions">
@@ -57,6 +59,18 @@
         </div>
       </div>
       <div id="detail"></div>
+    </section>
+
+    <section id="approvals" class="view">
+      <div class="approval-panel">
+        <div class="history-head">
+          <div><h2>Foreman Approvals</h2><p>Group A covers NO.1-24, Group C covers NO.26-42.</p></div>
+          <div class="head-actions">
+            <button class="btn" id="approvalRefresh">↻ Refresh</button>
+          </div>
+        </div>
+        <div id="approvalList" class="approval-list"></div>
+      </div>
     </section>
 
     <section id="history" class="view">
@@ -1514,6 +1528,7 @@ let currentMachine = "NO.1";
 let apiOnline = false;
 let currentMachineData = null;
 let currentHistoryRows = [];
+let currentApprovalGroups = [];
 
 function hasApiUrl(){
   return API_URL &&
@@ -1690,6 +1705,133 @@ function updateSummary(){
     "NO.25 = NO DATA";
 }
 
+function approvalStatusLabel(status){
+  return {
+    WAITING_SUBMISSIONS: "Waiting submissions",
+    READY_FOR_FOREMAN: "Ready for Foreman",
+    WAITING_FOREMAN_APPROVAL: "Waiting approval",
+    APPROVED: "Approved"
+  }[status] || "Waiting submissions";
+}
+
+function approvalStatusClass(status){
+  if(status === "APPROVED") return "approved";
+  if(status === "READY_FOR_FOREMAN" || status === "WAITING_FOREMAN_APPROVAL") return "ready";
+  return "waiting";
+}
+
+function renderApprovalSummary(){
+  const wrap = document.getElementById("approvalSummary");
+  if(!wrap) return;
+
+  if(!currentApprovalGroups.length){
+    wrap.innerHTML = `
+      <div class="approval-mini muted">
+        <span>Foreman Approval</span>
+        <strong>Waiting for API data</strong>
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = currentApprovalGroups.map(g=>`
+    <button class="approval-mini ${approvalStatusClass(g.status)}" onclick="openApprovals()">
+      <span>${escapeHtml(g.label || g.group)}</span>
+      <strong>${approvalStatusLabel(g.status)}</strong>
+      <small>${Number(g.submittedCount || 0)}/${Number(g.machineCount || 0)} submitted</small>
+    </button>`).join("");
+}
+
+function renderApprovals(){
+  const list = document.getElementById("approvalList");
+  if(!list) return;
+
+  if(!currentApprovalGroups.length){
+    list.innerHTML = `
+      <div class="empty">
+        <h2>No approval data</h2>
+        <p>Connect the Google Apps Script API to load Foreman approval status.</p>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = currentApprovalGroups.map(g=>{
+    const missing = (g.missingMachines || []).join(", ");
+    const submitted = (g.submittedMachines || []).join(", ");
+    const approved = g.status === "APPROVED";
+    const ready = g.complete && !approved;
+    return `
+      <div class="approval-card ${approvalStatusClass(g.status)}">
+        <div class="approval-card-head">
+          <div>
+            <h3>${escapeHtml(g.label || g.group)}</h3>
+            <p>${Number(g.submittedCount || 0)} of ${Number(g.machineCount || 0)} machines submitted</p>
+          </div>
+          <span>${approvalStatusLabel(g.status)}</span>
+        </div>
+        <div class="approval-meta">
+          <div><b>Foreman E-mail</b><span>${escapeHtml(g.foremanEmail || "—")}</span></div>
+          <div><b>Notified</b><span>${formatDateTime(g.notifiedAt)}</span></div>
+          <div><b>Approved</b><span>${approved ? `${formatDateTime(g.approvedAt)} / ${escapeHtml(g.approvedBy || "—")}` : "—"}</span></div>
+        </div>
+        <div class="approval-machines">
+          <b>${g.complete ? "Submitted machines" : "Missing machines"}</b>
+          <span>${escapeHtml(g.complete ? (submitted || "—") : (missing || "—"))}</span>
+        </div>
+        <div class="approval-actions">
+          <button class="btn" ${ready ? "" : "disabled"} onclick="approveGroup('${escapeHtml(g.group)}','${escapeHtml(g.date)}','${escapeHtml(g.token || "")}')">เซ็นอนุมัติ</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function openApprovals(){
+  document.querySelector('[data-view="approvals"]').click();
+}
+
+async function loadApprovals(){
+  const list = document.getElementById("approvalList");
+  if(list){
+    list.innerHTML = `<div class="loading-panel"><div class="spinner"></div><span>Loading approvals...</span></div>`;
+  }
+
+  if(!hasApiUrl()){
+    currentApprovalGroups = [];
+    renderApprovalSummary();
+    renderApprovals();
+    return;
+  }
+
+  try{
+    const data = await fetchJson("approvals");
+    currentApprovalGroups = data.groups || [];
+    renderApprovalSummary();
+    renderApprovals();
+  }catch(err){
+    if(list){
+      list.innerHTML = `<div class="empty"><h2>ไม่สามารถโหลด approvals ได้</h2><p>${escapeHtml(err.message)}</p></div>`;
+    }
+  }
+}
+
+async function approveGroup(group, date, token){
+  const approvedBy = prompt("ชื่อ Foreman ผู้อนุมัติ");
+  if(!approvedBy) return;
+
+  try{
+    await fetchJson("approve", {
+      group,
+      date,
+      token,
+      by: approvedBy
+    });
+    await loadApprovals();
+    await loadOverview();
+    alert("บันทึกการอนุมัติเรียบร้อยแล้ว");
+  }catch(err){
+    alert("ไม่สามารถอนุมัติได้: " + err.message);
+  }
+}
+
 function openMachine(m){
   currentMachine = m;
   document.querySelector('[data-view="machines"]').click();
@@ -1808,6 +1950,8 @@ function renderDetailFallback(m,errorMessage=""){
 async function loadOverview(){
   if(!hasApiUrl()){
     setConnection(false,"Demo — ใส่ Google Script URL");
+    currentApprovalGroups = [];
+    renderApprovalSummary();
     renderCards();
     updateSummary();
     renderDetailFallback("NO.1");
@@ -1818,12 +1962,16 @@ async function loadOverview(){
     const data = await fetchJson("overview");
     overviewData = {};
     (data.machines || []).forEach(x => overviewData[x.machine] = x);
+    currentApprovalGroups = data.approvals || [];
     setConnection(true,"Google Sheet Connected");
+    renderApprovalSummary();
+    renderApprovals();
     renderCards(document.getElementById("search")?.value || "");
     updateSummary();
     await loadMachine(currentMachine);
   }catch(err){
     setConnection(false,"API Error");
+    renderApprovalSummary();
     renderCards(document.getElementById("search")?.value || "");
     updateSummary();
     renderDetailFallback(currentMachine,err.message);
@@ -1955,6 +2103,7 @@ document.querySelectorAll(".nav").forEach(btn=>btn.onclick=()=>{
   document.getElementById(btn.dataset.view).classList.add("active");
   document.getElementById("pageTitle").textContent=btn.querySelector("span").textContent;
 
+  if(btn.dataset.view==="approvals") loadApprovals();
   if(btn.dataset.view==="history") loadHistory();
 });
 
@@ -1973,8 +2122,11 @@ sel.onchange=e=>{
   loadMachine(currentMachine);
 };
 
+document.getElementById("approvalRefresh").onclick = loadApprovals;
+
 renderCards();
 updateSummary();
+renderApprovalSummary();
 renderDetailFallback("NO.1");
 loadOverview();
 </script>
