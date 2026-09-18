@@ -36,7 +36,7 @@
       <div class="stats">
         <div class="stat"><span>Total Machines</span><strong>42</strong><small>NO.1 – NO.42</small></div>
         <div class="stat"><span>Data Available</span><strong>41</strong><small>NO.25 = NO DATA</small></div>
-        <div class="stat"><span>Checked Today</span><strong>—</strong><small>Connect Google Sheet</small></div>
+        <div class="stat"><span>Checked Latest</span><strong>—</strong><small>Connect Google Sheet</small></div>
         <div class="stat"><span>Pass Rate</span><strong>—</strong><small>Live data required</small></div>
       </div>
       <div id="approvalSummary" class="approval-summary"></div>
@@ -1548,11 +1548,26 @@ function apiUrl(action, params = {}){
 
 async function fetchJson(action, params = {}){
   if(!hasApiUrl()) throw new Error("ยังไม่ได้ใส่ Google Apps Script URL");
-  const res = await fetch(apiUrl(action, params), {cache:"no-store"});
-  if(!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  if(data.success === false) throw new Error(data.error || "API error");
-  return data;
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), 30000);
+
+  try{
+    const res = await fetch(apiUrl(action, params), {
+      cache:"no-store",
+      signal: controller.signal
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if(data.success === false) throw new Error(data.error || "API error");
+    return data;
+  }catch(err){
+    if(err.name === "AbortError"){
+      throw new Error("API timeout กรุณาลอง Refresh อีกครั้ง");
+    }
+    throw err;
+  }finally{
+    clearTimeout(timer);
+  }
 }
 
 function normalizeApiStatus(machine, rawStatus){
@@ -1684,13 +1699,35 @@ function renderCards(filter=""){
     });
 }
 
+function parseDateKey(value){
+  if(value === null || value === undefined || value === "") return "";
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const thai = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(thai) return `${thai[3]}-${thai[2].padStart(2,"0")}-${thai[1].padStart(2,"0")}`;
+  const d = new Date(text);
+  if(isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+function todayDateKey(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
 function updateSummary(){
   const list = machines.map(getMachineInfo);
-  const checked = list.filter(x => {
-    const st = normalizeApiStatus(x.machine, x.status);
-    return st === "pass" || st === "ng" ||
-      (x.lastCheck && x.machine !== "NO.25");
-  }).length;
+  const today = todayDateKey();
+  const latestDate = list
+    .map(x => parseDateKey(x.lastCheck))
+    .filter(Boolean)
+    .sort()
+    .pop();
+  const checked = list.filter(x =>
+    x.machine !== "NO.25" &&
+    x.lastCheck &&
+    parseDateKey(x.lastCheck) === latestDate
+  ).length;
 
   const pass = list.filter(x => normalizeApiStatus(x.machine,x.status)==="pass").length;
   const ng = list.filter(x => normalizeApiStatus(x.machine,x.status)==="ng").length;
@@ -1704,6 +1741,8 @@ function updateSummary(){
 
   document.querySelector(".stat:nth-child(2) small").textContent =
     "NO.25 = NO DATA";
+  document.querySelector(".stat:nth-child(3) small").textContent =
+    latestDate ? `Latest data: ${latestDate}` : "No check data";
 }
 
 function approvalStatusLabel(status){
@@ -1796,9 +1835,10 @@ function openApprovals(){
   document.querySelector('[data-view="approvals"]').click();
 }
 
-async function loadApprovals(){
+async function loadApprovals(options = {}){
   const list = document.getElementById("approvalList");
-  if(list){
+  const silent = options.silent === true;
+  if(list && !silent){
     list.innerHTML = `<div class="loading-panel"><div class="spinner"></div><span>Loading approvals...</span></div>`;
   }
 
@@ -1816,10 +1856,11 @@ async function loadApprovals(){
     }
     const data = await fetchJson("approvals", params);
     currentApprovalGroups = data.groups || [];
+    lastApprovalLoad = Date.now();
     renderApprovalSummary();
     renderApprovals();
   }catch(err){
-    if(list){
+    if(list && !silent){
       list.innerHTML = `<div class="empty"><h2>ไม่สามารถโหลด approvals ได้</h2><p>${escapeHtml(err.message)}</p></div>`;
     }
   }
@@ -1984,15 +2025,19 @@ async function loadOverview(){
     const data = await fetchJson("overview");
     overviewData = {};
     (data.machines || []).forEach(x => overviewData[x.machine] = x);
-    currentApprovalGroups = data.approvals || [];
     setConnection(true,"Google Sheet Connected");
-    renderApprovalSummary();
-    renderApprovals();
     renderCards(document.getElementById("search")?.value || "");
     updateSummary();
-    await loadMachine(currentMachine);
+
+    if(Date.now() - lastApprovalLoad > 30000){
+      loadApprovals({silent:true});
+    }
+
+    if(document.getElementById("machines").classList.contains("active")){
+      await loadMachine(currentMachine);
+    }
   }catch(err){
-    setConnection(false,"API Error");
+    setConnection(false,`API Error: ${err.message}`);
     renderApprovalSummary();
     renderCards(document.getElementById("search")?.value || "");
     updateSummary();
@@ -2110,48 +2155,3 @@ function exportHistory(){
     "Date": formatDateTime(r.timestamp),
     "Machine": r.machine || "—",
     "Inspector": r.inspector || "—",
-    "Score": formatScoreFraction(r.score, totalItemsFor(r.machine))
-  }));
-  downloadRowsAsExcel(`history-${timestampForFilename()}.xlsx`, "History", rows);
-}
-
-document.getElementById("exportOverviewBtn").onclick = exportOverview;
-document.getElementById("exportMachineBtn").onclick = exportMachineDetail;
-
-document.querySelectorAll(".nav").forEach(btn=>btn.onclick=()=>{
-  document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
-  btn.classList.add("active");
-  document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
-  document.getElementById(btn.dataset.view).classList.add("active");
-  document.getElementById("pageTitle").textContent=btn.querySelector("span").textContent;
-
-  if(btn.dataset.view==="approvals") loadApprovals();
-  if(btn.dataset.view==="history") loadHistory();
-});
-
-document.getElementById("search").oninput=e=>renderCards(e.target.value);
-
-const sel=document.getElementById("machineSelect");
-machines.forEach(m=>{
-  const o=document.createElement("option");
-  o.value=m;
-  o.textContent=m;
-  sel.appendChild(o);
-});
-sel.onchange=e=>{
-  currentMachine=e.target.value;
-  renderDetailLoading(currentMachine);
-  loadMachine(currentMachine);
-};
-
-document.getElementById("approvalRefresh").onclick = loadApprovals;
-
-renderCards();
-updateSummary();
-renderApprovalSummary();
-renderDetailFallback("NO.1");
-openInitialViewFromUrl();
-loadOverview();
-</script>
-</body>
-</html>
