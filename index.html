@@ -2239,8 +2239,14 @@ function startAutoRefresh(){
   overviewRefreshTimer = setInterval(()=>{
     if(document.hidden) return;
     loadOverview();
-  }, 60000);
+  }, 20000);
 }
+
+// Refresh right away when the user comes back to this tab, instead of
+// making them wait up to 20s for the next scheduled tick.
+document.addEventListener("visibilitychange", ()=>{
+  if(!document.hidden) loadOverview();
+});
 
 renderCards();
 updateSummary();
