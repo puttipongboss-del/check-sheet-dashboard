@@ -1599,11 +1599,21 @@ function formatScore(value){
 
 function totalItemsFor(machine){
   const info = overviewData[machine];
+  if(info && Number.isFinite(Number(info.fullScore)) && Number(info.fullScore) > 0){
+    return Number(info.fullScore);
+  }
   if(info && Number.isFinite(Number(info.itemCount)) && Number(info.itemCount) > 0){
     return Number(info.itemCount);
   }
   const h = SCHEMAS[machine] || [];
   return h.filter(x => !["Timestamp","Score","ผู้ตรวจสอบ"].includes(x)).length;
+}
+
+function historyTotalFor(r){
+  if(r && Number.isFinite(Number(r.fullScore)) && Number(r.fullScore) > 0){
+    return Number(r.fullScore);
+  }
+  return totalItemsFor(r.machine);
 }
 
 function formatScoreFraction(score, total){
@@ -1983,13 +1993,16 @@ function renderDetailFromApi(m,data){
   const headers = data.itemHeaders || (data.headers || []).filter(x =>
     !["Timestamp","Score","ผู้ตรวจสอบ"].includes(x)
   );
+  const total = Number.isFinite(Number(data.fullScore)) && Number(data.fullScore) > 0
+    ? Number(data.fullScore)
+    : headers.length;
 
-  currentMachineData = { machine:m, latest, headers };
+  currentMachineData = { machine:m, latest, headers, total };
 
   d.innerHTML=`
     <div class="detail-stats">
       <div><span>Machine</span><strong>${m}</strong></div>
-      <div><span>Score</span><strong>${formatScoreFraction(latest.Score, headers.length)}</strong></div>
+      <div><span>Score</span><strong>${formatScoreFraction(latest.Score, total)}</strong></div>
       <div><span>Inspector</span><strong>${escapeHtml(latest["ผู้ตรวจสอบ"] || "—")}</strong></div>
       <div><span>Last Check</span><strong>${formatDateTime(latest.Timestamp)}</strong></div>
     </div>
@@ -2125,7 +2138,7 @@ async function loadHistory(){
             <td>${formatDateTime(r.timestamp)}</td>
             <td><b>${escapeHtml(r.machine)}</b></td>
             <td>${escapeHtml(r.inspector || "—")}</td>
-            <td>${formatScoreFraction(r.score, totalItemsFor(r.machine))}</td>
+            <td>${formatScoreFraction(r.score, historyTotalFor(r))}</td>
           </tr>`).join("")}</tbody>
       </table>` :
       `<div class="empty"><h2>No records</h2><p>ยังไม่มีข้อมูลการตรวจ</p></div>`;
@@ -2198,7 +2211,7 @@ function exportHistory(){
     "Date": formatDateTime(r.timestamp),
     "Machine": r.machine || "—",
     "Inspector": r.inspector || "—",
-    "Score": formatScoreFraction(r.score, totalItemsFor(r.machine))
+    "Score": formatScoreFraction(r.score, historyTotalFor(r))
   }));
   downloadRowsAsExcel(`history-${timestampForFilename()}.xlsx`, "History", rows);
 }
